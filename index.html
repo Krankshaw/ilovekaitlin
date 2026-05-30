@@ -259,9 +259,81 @@
   }
   .btn-restart.show { opacity:1; pointer-events:all; }
   .btn-restart:hover { color:#fff; border-color:var(--pink); background:rgba(255,34,68,0.18); box-shadow:0 0 24px rgba(255,34,68,0.35); }
+
+  /* ── EKG INTRO ── */
+  #ekg-intro {
+    position:fixed; inset:0; background:#000; z-index:50;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    transition:opacity 1.4s ease;
+  }
+  #ekg-intro.fade-out { opacity:0; pointer-events:none; }
+
+  .ekg-title {
+    font-family:'Cinzel Decorative',serif;
+    font-size:clamp(0.9rem,2.8vw,1.8rem); color:var(--pink);
+    text-shadow:0 0 20px var(--glow),0 0 60px var(--deep);
+    letter-spacing:0.18em; margin-bottom:20px;
+    animation:flicker 5s infinite;
+  }
+
+  .ekg-big-heart {
+    font-size:clamp(2.2rem,5vw,3.5rem);
+    color:var(--pink); text-shadow:0 0 30px var(--glow);
+    display:inline-block; margin-bottom:18px;
+    animation:heartIdle 2.2s ease-in-out infinite;
+    will-change:transform;
+  }
+  .ekg-big-heart.beat {
+    animation:heartBeat 0.55s cubic-bezier(0.36,0.07,0.19,0.97) forwards;
+  }
+  @keyframes heartIdle {
+    0%,100%{transform:scale(1)} 50%{transform:scale(1.06)}
+  }
+  @keyframes heartBeat {
+    0%  {transform:scale(1)}
+    25% {transform:scale(1.55); text-shadow:0 0 50px var(--pink),0 0 90px var(--glow);}
+    55% {transform:scale(0.92);}
+    75% {transform:scale(1.12);}
+    100%{transform:scale(1); text-shadow:0 0 30px var(--glow);}
+  }
+
+  #ekg-canvas { display:block; }
+
+  .ekg-status {
+    font-size:0.6rem; letter-spacing:0.42em; color:var(--deep);
+    margin-top:20px; text-transform:uppercase; min-height:1.3em;
+    transition:color 0.6s ease;
+  }
+  .ekg-status.bright { color:var(--pink); text-shadow:0 0 10px var(--pink); }
+
+  .ekg-dots { display:flex; gap:9px; margin-top:18px; }
+  .ekg-dot {
+    width:5px; height:5px; border-radius:50%; background:var(--deep);
+    animation:dotPulse 1.5s ease-in-out infinite;
+  }
+  .ekg-dot:nth-child(2){animation-delay:0.25s;}
+  .ekg-dot:nth-child(3){animation-delay:0.5s;}
+  @keyframes dotPulse {
+    0%,100%{opacity:0.25;transform:scale(1);}
+    50%{opacity:1;transform:scale(1.5);background:var(--pink);}
+  }
 </style>
 </head>
 <body>
+
+<!-- EKG INTRO -->
+<div id="ekg-intro">
+  <div class="ekg-title">♥ &nbsp;HEART PROTOCOL&nbsp; ♥</div>
+  <div class="ekg-big-heart" id="ekg-big-heart">♥</div>
+  <canvas id="ekg-canvas"></canvas>
+  <div class="ekg-status" id="ekg-status">SCANNING FOR HEARTBEAT...</div>
+  <div class="ekg-dots">
+    <div class="ekg-dot"></div>
+    <div class="ekg-dot"></div>
+    <div class="ekg-dot"></div>
+  </div>
+</div>
+
 <div class="scanlines"></div>
 <div class="vignette"></div>
 
@@ -315,6 +387,7 @@
 })();
 
 // ── BOOT ─────────────────────────────────────────────────────────
+function startBoot() {
 const lines = [
   { text:'> SCANNING emotional core...',            cls:'dim',  delay:400  },
   { text:'> Emotional core: LOCATED  ♥',            cls:'',     delay:950  },
@@ -337,6 +410,8 @@ lines.forEach(({ text, cls, delay }) => {
   }, delay);
 });
 setTimeout(() => document.getElementById('initBtn').classList.add('show'), 6600);
+} // end startBoot
+setTimeout(startBoot, 15000);
 
 // ── GAME ENGINE ──────────────────────────────────────────────────
 let currentLevel = 0;
@@ -945,6 +1020,183 @@ function startHeart() {
   }
   loop();
 }
+
+// ── EKG INTRO ANIMATION ──────────────────────────────────────────
+(function runEKG() {
+  const overlay  = document.getElementById('ekg-intro');
+  const canvas   = document.getElementById('ekg-canvas');
+  const heartEl  = document.getElementById('ekg-big-heart');
+  const statusEl = document.getElementById('ekg-status');
+  const ctx      = canvas.getContext('2d');
+
+  const W = canvas.width  = Math.min(window.innerWidth - 40, 820);
+  const H = canvas.height = 130;
+  const MID = H / 2;
+
+  // EKG waveform: one heartbeat cycle mapped to t in [0,1]
+  function waveY(t) {
+    if (t < 0.05)  return 0;
+    if (t < 0.13)  return -9  * Math.sin((t-0.05)/0.08  * Math.PI);  // P
+    if (t < 0.27)  return 0;
+    if (t < 0.31)  return  7  * Math.sin((t-0.27)/0.04  * Math.PI);  // Q
+    if (t < 0.355) return -58 * Math.sin((t-0.31)/0.045 * Math.PI);  // R spike ♥
+    if (t < 0.40)  return  11 * Math.sin((t-0.355)/0.045* Math.PI);  // S
+    if (t < 0.52)  return 0;
+    if (t < 0.70)  return -16 * Math.sin((t-0.52)/0.18  * Math.PI);  // T
+    return 0;
+  }
+
+  const CYCLE_PX = 230;    // pixels per heartbeat
+  const SPEED    = 1.8;    // pixels per frame
+  const ERASER   = 36;     // blank gap ahead of pen
+
+  // Fill data buffer with one repeating waveform
+  const data = new Float32Array(W);
+  for (let x = 0; x < W; x++) {
+    data[x] = MID + waveY((x % CYCLE_PX) / CYCLE_PX);
+  }
+
+  let penX = 0;
+  let animId;
+  let beating = false;
+  let lastBeatPhase = 1;
+
+  function triggerBeat() {
+    if (beating) return;
+    beating = true;
+    heartEl.classList.remove('beat');
+    void heartEl.offsetWidth; // reflow to restart animation
+    heartEl.classList.add('beat');
+    setTimeout(() => { beating = false; }, 600);
+  }
+
+  // Color gradient along the trail
+  function trailColor(progress) {
+    // progress 0=oldest, 1=newest
+    const alpha = Math.pow(progress, 1.8) * 0.88;
+    const r = Math.round(180 + 75  * progress);
+    const g = Math.round(30  + 77  * progress);
+    const b = Math.round(60  + 97  * progress);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // Dim grid line
+    ctx.beginPath();
+    ctx.moveTo(0, MID); ctx.lineTo(W, MID);
+    ctx.strokeStyle = 'rgba(255,34,68,0.06)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Draw trail: two segments (right of eraser → W, then 0 → pen)
+    // Segment A: from (penX + ERASER) to W
+    // Segment B: from 0 to penX
+    const BUCKETS = 12;
+
+    function drawSegment(x0, x1) {
+      if (x1 <= x0 + 1) return;
+      const len = x1 - x0;
+      const bSize = Math.ceil(len / BUCKETS);
+      for (let b = 0; b < BUCKETS; b++) {
+        const sx = x0 + b * bSize;
+        const ex = Math.min(x0 + (b + 1) * bSize, x1);
+        // Progress: ratio within overall trail (0=oldest portion)
+        const p0 = (sx - x0) / len;
+        const pm = (sx + ex) / 2 / (x1 === W ? W : x1) ;
+        const progress = b / (BUCKETS - 1);
+        ctx.beginPath();
+        ctx.strokeStyle = trailColor(progress);
+        ctx.lineWidth = b > BUCKETS - 4 ? 2.5 : 1.5;
+        for (let x = sx; x <= ex; x++) {
+          if (x === sx) ctx.moveTo(x, data[x]);
+          else          ctx.lineTo(x, data[x]);
+        }
+        ctx.stroke();
+      }
+    }
+
+    // Two-segment draw based on pen position
+    const penI = Math.floor(penX);
+    const gapEnd = (penI + ERASER) % W;
+    if (gapEnd > penI) {
+      // Normal: draw 0→penI and gapEnd→W
+      drawSegment(0, penI);
+      drawSegment(gapEnd, W);
+    } else {
+      // Wrap: gap straddles 0
+      drawSegment(gapEnd, penI);
+    }
+
+    // Glowing dot at pen tip
+    const ty = data[penI];
+    const grd = ctx.createRadialGradient(penI, ty, 0, penI, ty, 12);
+    grd.addColorStop(0, 'rgba(255,180,210,1)');
+    grd.addColorStop(0.4, 'rgba(255,68,100,0.6)');
+    grd.addColorStop(1, 'rgba(255,34,68,0)');
+    ctx.beginPath();
+    ctx.arc(penI, ty, 10, 0, Math.PI * 2);
+    ctx.fillStyle = grd;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(penI, ty, 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffccdd';
+    ctx.fill();
+
+    // Detect R-spike crossing (phase ≈ 0.33)
+    const phase = (penX % CYCLE_PX) / CYCLE_PX;
+    if (lastBeatPhase > 0.30 && phase < 0.30 && penX > CYCLE_PX) {
+      triggerBeat();
+    }
+    lastBeatPhase = phase;
+
+    // Advance pen and fill ahead
+    penX = (penX + SPEED) % W;
+    const nextI = Math.floor(penX);
+    data[nextI] = MID + waveY((nextI % CYCLE_PX) / CYCLE_PX);
+
+    animId = requestAnimationFrame(draw);
+  }
+
+  // Status message rotation
+  const messages = [
+    { text:'SCANNING FOR HEARTBEAT...',         bright:false },
+    { text:'SIGNAL DETECTED  ♥',                bright:true  },
+    { text:'MEASURING AFFECTION LEVELS...',      bright:false },
+    { text:'AFFECTION LEVEL: DANGEROUSLY HIGH ♥',bright:true  },
+    { text:'ESTABLISHING SECURE CHANNEL...',     bright:false },
+    { text:'ENCRYPTION: LOVE-256  ♥',            bright:true  },
+    { text:'COMPILING HEART TOKENS...',          bright:false },
+    { text:'OVERFLOW DETECTED  ♥',               bright:true  },
+  ];
+  let msgI = 0;
+  function cycleMsg() {
+    const m = messages[msgI % messages.length];
+    statusEl.textContent = m.text;
+    statusEl.classList.toggle('bright', m.bright);
+    msgI++;
+  }
+  cycleMsg();
+  const msgTimer = setInterval(cycleMsg, 1900);
+
+  animId = requestAnimationFrame(draw);
+
+  // Fade out at ~14s → boot starts at 15s
+  setTimeout(() => {
+    clearInterval(msgTimer);
+    statusEl.textContent = 'CONNECTION ESTABLISHED  ♥';
+    statusEl.classList.add('bright');
+    triggerBeat();
+    setTimeout(() => {
+      overlay.classList.add('fade-out');
+      setTimeout(() => {
+        overlay.style.display = 'none';
+        cancelAnimationFrame(animId);
+      }, 1500);
+    }, 600);
+  }, 13400);
+})();
 </script>
 </body>
 </html>
